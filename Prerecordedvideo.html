@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gym AI Pose Detection - Pre-recorded Video</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #e0f7f9;
+      text-align: center;
+    }
+
+    /* Keep your same canvas styling */
+    #poseCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    video {
+      border-radius: 12px;
+      width: 80%;
+      max-width: 720px;
+    }
+
+    #uploadButton, .exerciseButton {
+      background-color: #008080;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px;
+    }
+
+    #status {
+      font-size: 20px;
+      margin-top: 20px;
+    }
+
+    .exerciseButton {
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <h1>Gym AI Pose Detection - Pre-recorded Video</h1>
+
+  <input type="file" id="uploadButton" accept="video/*" />
+  <button class="exerciseButton" id="squatsButton">Squats</button>
+  <button class="exerciseButton" id="pushupsButton">Push-ups</button>
+  <button class="exerciseButton" id="highKneesButton">High Knees</button>
+
+  <br />
+  <!-- Wrap the video + canvas in a relative container -->
+  <div style="position: relative; display: inline-block;">
+    <video id="video" controls></video>
+    <canvas id="poseCanvas"></canvas>
+  </div>
+
+  <div id="status">
+    <p>Position: <span id="position">Analyzing...</span></p>
+    <p>Reps: <span id="reps">0</span></p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('poseCanvas');
+    const ctx = canvas.getContext('2d');
+    let pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    
+    let reps = 0;
+    let currentExercise = 'squats';
+    let previousY = null;
+    let inPosition = false;
+    let analyzing = true;  // New flag to control status change
+    let highKneesInPosition = false;
+
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onPoseDetected);
+
+    document.getElementById('uploadButton').addEventListener('change', function(event) {
+      const file = event.target.files[0];
+      const videoURL = URL.createObjectURL(file);
+      video.src = videoURL;
+      video.play();
+
+      video.addEventListener('loadedmetadata', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      });
+
+      video.addEventListener('play', () => {
+        // Continuously analyze the video while playing
+        const detectPose = async () => {
+          if (!video.paused && !video.ended) {
+            await pose.send({image: video});
+            requestAnimationFrame(detectPose);
+          }
+        };
+        detectPose();
+      });
+    });
+
+    function onPoseDetected(results) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (results.poseLandmarks) {
+        drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, {color: 'green', lineWidth: 4});
+        drawLandmarks(ctx, results.poseLandmarks, {color: 'red', lineWidth: 2});
+
+        // Exercise logic based on selected exercise
+        switch (currentExercise) {
+          case 'squats':
+            analyzeSquat(results.poseLandmarks);
+            break;
+          case 'pushups':
+            analyzePushup(results.poseLandmarks);
+            break;
+          case 'highKnees':
+            analyzeHighKnees(results.poseLandmarks);
+            break;
+        }
+      }
+    }
+
+    document.getElementById('squatsButton').addEventListener('click', () => {
+      currentExercise = 'squats';
+      resetExercise();
+    });
+
+    document.getElementById('pushupsButton').addEventListener('click', () => {
+      currentExercise = 'pushups';
+      resetExercise();
+    });
+
+    document.getElementById('highKneesButton').addEventListener('click', () => {
+      currentExercise = 'highKnees';
+      resetExercise();
+    });
+
+    function resetExercise() {
+      reps = 0;
+      document.getElementById('reps').textContent = reps;
+      inPosition = false;
+      highKneesInPosition = false;
+      analyzing = true;
+      document.getElementById('position').textContent = "Analyzing...";
+    }
+
+    // Squat logic (with status update)
+    function analyzeSquat(landmarks) {
+      const hip = landmarks[24].y;
+      const knee = landmarks[26].y;
+
+      if (previousY === null) previousY = hip;
+
+      if (!inPosition && hip > knee) {
+        inPosition = true;
+        if (analyzing) {
+          document.getElementById('position').textContent = "Right";
+          analyzing = false;
+        }
+      } else if (inPosition && hip < knee) {
+        reps++;
+        document.getElementById('reps').textContent = reps;
+        inPosition = false;
+      }
+    }
+
+    // Pushup logic (with status update)
+    function analyzePushup(landmarks) {
+      const elbow = landmarks[13].y;
+      const shoulder = landmarks[11].y;
+
+      if (previousY === null) previousY = elbow;
+
+      if (!inPosition && elbow > shoulder) {
+        inPosition = true;
+        if (analyzing) {
+          document.getElementById('position').textContent = "Right";
+          analyzing = false;
+        }
+      } else if (inPosition && elbow < shoulder) {
+        reps++;
+        document.getElementById('reps').textContent = reps;
+        inPosition = false;
+      }
+    }
+
+    // High Knees logic (with status update)
+    function analyzeHighKnees(landmarks) {
+      const hip = landmarks[24].y;
+      const knee = landmarks[26].y;
+
+      if (!highKneesInPosition && knee < hip) {
+        highKneesInPosition = true;
+        if (analyzing) {
+          document.getElementById('position').textContent = " Right";
+          analyzing = false;
+        }
+      } else if (highKneesInPosition && knee >= hip) {
+        reps++;
+        document.getElementById('reps').textContent = reps;
+        highKneesInPosition = false;
+      }
+    }
+  </script>
+</body>
+</html>
